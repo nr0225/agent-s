@@ -152,12 +152,21 @@ def scale_screen_dimensions(width: int, height: int, max_dim_size: int):
     return safe_width, safe_height
 
 
-def run_agent(agent, instruction: str, scaled_width: int, scaled_height: int):
+def run_agent(
+    agent,
+    instruction: str,
+    scaled_width: int,
+    scaled_height: int,
+    *,
+    dry_run: bool = False,
+    require_confirmation: bool = True,
+    max_steps: int = 15,
+):
     global paused
     obs = {}
     traj = "Task:\n" + instruction
     subtask_traj = ""
-    for step in range(15):
+    for step in range(max_steps):
         # Check if we're in paused state and wait
         while paused:
             time.sleep(0.1)
@@ -178,21 +187,22 @@ def run_agent(agent, instruction: str, scaled_width: int, scaled_height: int):
         while paused:
             time.sleep(0.1)
 
-        print(f"\n🔄 Step {step + 1}/15: Getting next action from agent...")
+        print(f"\n🔄 Step {step + 1}/{max_steps}: Getting next action from agent...")
 
         # Get next action code from the agent
         info, code = agent.predict(instruction=instruction, observation=obs)
 
         if "done" in code[0].lower() or "fail" in code[0].lower():
-            if platform.system() == "Darwin":
-                os.system(
-                    f'osascript -e \'display dialog "Task Completed" with title "OpenACI Agent" buttons "OK" default button "OK"\''
-                )
-            elif platform.system() == "Linux":
-                os.system(
-                    f'zenity --info --title="OpenACI Agent" --text="Task Completed" --width=200 --height=100'
-                )
-
+            print("✅ Agent reported completion:", code[0])
+            if not dry_run:
+                if platform.system() == "Darwin":
+                    os.system(
+                        f'osascript -e \'display dialog "Task Completed" with title "OpenACI Agent" buttons "OK" default button "OK"\''
+                    )
+                elif platform.system() == "Linux":
+                    os.system(
+                        f'zenity --info --title="OpenACI Agent" --text="Task Completed" --width=200 --height=100'
+                    )
             break
 
         if "next" in code[0].lower():
@@ -204,14 +214,24 @@ def run_agent(agent, instruction: str, scaled_width: int, scaled_height: int):
             continue
 
         else:
-            time.sleep(1.0)
-            print("EXECUTING CODE:", code[0])
+            print("PROPOSED CODE:", code[0])
+
+            if dry_run:
+                print("🧪 Dry-run enabled; proposed GUI action was not executed.")
+                break
 
             # Check for pause state before execution
             while paused:
                 time.sleep(0.1)
 
-            # Ask for permission before executing
+            if require_confirmation and not show_permission_dialog(
+                code[0], "control the GUI"
+            ):
+                print("⛔ Action cancelled by user.")
+                break
+
+            time.sleep(1.0)
+            print("EXECUTING CODE:", code[0])
             exec(code[0])
             time.sleep(1.0)
 
@@ -320,6 +340,24 @@ def main():
         type=str,
         help="The task instruction for Agent-S3 to perform.",
     )
+    parser.add_argument(
+        "--dry_run",
+        action="store_true",
+        default=False,
+        help="Predict GUI actions but never execute them.",
+    )
+    parser.add_argument(
+        "--auto_execute",
+        action="store_true",
+        default=False,
+        help="Execute GUI actions without confirmation (unsafe).",
+    )
+    parser.add_argument(
+        "--max_steps",
+        type=int,
+        default=15,
+        help="Maximum number of GUI action steps for one task.",
+    )
 
     args = parser.parse_args()
 
@@ -378,7 +416,15 @@ def main():
     # handle query from command line
     if isinstance(task, str) and task.strip():
         agent.reset()
-        run_agent(agent, task, scaled_width, scaled_height)
+        run_agent(
+            agent,
+            task,
+            scaled_width,
+            scaled_height,
+            dry_run=args.dry_run,
+            require_confirmation=not args.auto_execute,
+            max_steps=max(1, args.max_steps),
+        )
         return
 
     while True:
