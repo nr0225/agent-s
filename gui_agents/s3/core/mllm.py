@@ -351,6 +351,11 @@ class LMMAgent:
                 {"role": "user", "content": [{"type": "text", "text": user_message}]}
             )
 
+        # Normalize an explicitly passed None back to the intended default.
+        # Some OpenAI-compatible servers reject JSON null for temperature.
+        if temperature is None:
+            temperature = 0.0
+
         # Regular generation
         if use_thinking:
             return self.engine.generate_with_thinking(
